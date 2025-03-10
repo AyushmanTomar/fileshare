@@ -20,7 +20,7 @@ app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(16))
 
 # MongoDB Atlas connection
 client = MongoClient(os.getenv('MONGODB_URI'))
-db = client['room_sharing_app']
+db = client['DocKaro']
 rooms_collection = db['rooms']
 messages_collection = db['messages']
 files_collection = db['files']
