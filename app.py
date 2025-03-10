@@ -1,6 +1,5 @@
 # app.py
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
-from flask_socketio import SocketIO, join_room, leave_room, emit
 from pymongo import MongoClient
 import cloudinary
 import cloudinary.uploader
@@ -18,11 +17,10 @@ load_dotenv()
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(16))
-socketio = SocketIO(app)
 
 # MongoDB Atlas connection
 client = MongoClient(os.getenv('MONGODB_URI'))
-db = client['DocKaro']
+db = client['room_sharing_app']
 rooms_collection = db['rooms']
 messages_collection = db['messages']
 files_collection = db['files']
@@ -56,6 +54,14 @@ def create_room():
         'max_members': 2
     })
     
+    # Add join message
+    messages_collection.insert_one({
+        'room_id': room_id,
+        'type': 'system',
+        'content': f'{username} has created the room.',
+        'created_at': datetime.datetime.now()
+    })
+    
     session['username'] = username
     session['room'] = room_id
     
@@ -87,6 +93,14 @@ def join_existing_room():
             {'room_id': room_id},
             {'$push': {'members': username}}
         )
+        
+        # Add join message
+        messages_collection.insert_one({
+            'room_id': room_id,
+            'type': 'system',
+            'content': f'{username} has joined the room.',
+            'created_at': datetime.datetime.now()
+        })
     
     session['username'] = username
     session['room'] = room_id
@@ -103,27 +117,92 @@ def room(room_id):
     if not room or session['username'] not in room['members']:
         return redirect(url_for('index'))
     
-    # Get room messages
-    messages = list(messages_collection.find({'room_id': room_id}).sort('created_at', 1))
-    
-    # Get room files
-    files = list(files_collection.find({'room_id': room_id}).sort('uploaded_at', -1))
-    
-    return render_template(
-        'room.html', 
-        username=session['username'], 
-        room=room_id, 
-        messages=messages, 
-        files=files
-    )
+    return render_template('room.html', 
+                          username=session['username'], 
+                          room=room_id,
+                          room_data=room)
 
-@app.route('/upload_file', methods=['POST'])
+@app.route('/api/messages', methods=['GET'])
+def get_messages():
+    if 'username' not in session or 'room' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    room_id = session.get('room')
+    
+    # Get last message ID for pagination
+    last_id = request.args.get('last_id', None)
+    limit = int(request.args.get('limit', 50))
+    
+    query = {'room_id': room_id}
+    if last_id:
+        last_message = messages_collection.find_one({'_id': ObjectId(last_id)})
+        if last_message:
+            query['created_at'] = {'$gt': last_message['created_at']}
+    
+    # Get messages
+    messages = list(messages_collection.find(query)
+                    .sort('created_at', 1)
+                    .limit(limit))
+    
+    # Convert ObjectId to string for JSON serialization
+    for message in messages:
+        message['_id'] = str(message['_id'])
+        message['created_at'] = message['created_at'].isoformat()
+    
+    return jsonify(messages)
+
+@app.route('/api/messages', methods=['POST'])
+def send_message():
+    if 'username' not in session or 'room' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    room_id = session.get('room')
+    username = session.get('username')
+    content = request.json.get('content')
+    
+    if not content:
+        return jsonify({'error': 'Message content is required'}), 400
+    
+    # Save message to database
+    message = {
+        'room_id': room_id,
+        'type': 'user',
+        'username': username,
+        'content': content,
+        'created_at': datetime.datetime.now()
+    }
+    
+    result = messages_collection.insert_one(message)
+    message['_id'] = str(result.inserted_id)
+    message['created_at'] = message['created_at'].isoformat()
+    
+    return jsonify(message)
+
+@app.route('/api/files', methods=['GET'])
+def get_files():
+    if 'username' not in session or 'room' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    room_id = session.get('room')
+    
+    # Get files
+    files = list(files_collection.find({'room_id': room_id})
+                .sort('uploaded_at', -1))
+    
+    # Convert ObjectId to string for JSON serialization
+    for file in files:
+        file['_id'] = str(file['_id'])
+        file['uploaded_at'] = file['uploaded_at'].isoformat()
+    
+    return jsonify(files)
+
+@app.route('/api/files', methods=['POST'])
 def upload_file():
     if 'username' not in session or 'room' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
     
-    room_id = session['room']
-    username = session['username']
+    room_id = session.get('room')
+    username = session.get('username')
     
     # Check if file is in request
     if 'file' not in request.files:
@@ -139,9 +218,7 @@ def upload_file():
     upload_result = cloudinary.uploader.upload(file)
     
     # Save file info to database
-    file_id = str(ObjectId())
     file_info = {
-        '_id': file_id,
         'room_id': room_id,
         'filename': file.filename,
         'cloudinary_url': upload_result['secure_url'],
@@ -150,55 +227,71 @@ def upload_file():
         'uploaded_at': datetime.datetime.now()
     }
     
-    files_collection.insert_one(file_info)
+    result = files_collection.insert_one(file_info)
+    file_info['_id'] = str(result.inserted_id)
+    file_info['uploaded_at'] = file_info['uploaded_at'].isoformat()
     
-    # Notify room members about new file
-    socketio.emit('new_file', {
-        'username': username,
-        'filename': file.filename,
-        'url': upload_result['secure_url'],
-        'file_id': file_id,
-        'uploaded_at': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }, room=room_id)
+    # Add system message about file upload
+    message = {
+        'room_id': room_id,
+        'type': 'system',
+        'content': f'{username} uploaded a file: {file.filename}',
+        'file_id': str(result.inserted_id),
+        'created_at': datetime.datetime.now()
+    }
+    messages_collection.insert_one(message)
     
-    return jsonify({
-        'success': True, 
-        'file_url': upload_result['secure_url'],
-        'file_id': file_id
-    })
+    return jsonify(file_info)
 
-@app.route('/delete_file/<file_id>', methods=['DELETE'])
+@app.route('/api/files/<file_id>', methods=['DELETE'])
 def delete_file(file_id):
     if 'username' not in session or 'room' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
     
+    room_id = session.get('room')
+    username = session.get('username')
+    
     # Get file info
-    file_info = files_collection.find_one({'_id': file_id})
+    file_info = files_collection.find_one({'_id': ObjectId(file_id), 'room_id': room_id})
     if not file_info:
         return jsonify({'error': 'File not found'}), 404
     
     # Check if user is allowed to delete the file
-    if file_info['uploaded_by'] != session['username']:
+    if file_info['uploaded_by'] != username:
         return jsonify({'error': 'Not allowed to delete this file'}), 403
     
     # Delete from Cloudinary
     cloudinary.uploader.destroy(file_info['cloudinary_public_id'])
     
     # Delete from database
-    files_collection.delete_one({'_id': file_id})
+    files_collection.delete_one({'_id': ObjectId(file_id)})
     
-    # Notify room members about deleted file
-    socketio.emit('file_deleted', {'file_id': file_id}, room=session['room'])
+    # Add system message about file deletion
+    message = {
+        'room_id': room_id,
+        'type': 'system',
+        'content': f'{username} deleted a file: {file_info["filename"]}',
+        'created_at': datetime.datetime.now()
+    }
+    messages_collection.insert_one(message)
     
     return jsonify({'success': True})
 
 @app.route('/leave_room', methods=['POST'])
-def leave_existing_room():
+def leave_room():
     if 'username' not in session or 'room' not in session:
         return redirect(url_for('index'))
     
-    room_id = session['room']
-    username = session['username']
+    room_id = session.get('room')
+    username = session.get('username')
+    
+    # Add leave message
+    messages_collection.insert_one({
+        'room_id': room_id,
+        'type': 'system',
+        'content': f'{username} has left the room.',
+        'created_at': datetime.datetime.now()
+    })
     
     # Remove user from room
     rooms_collection.update_one(
@@ -207,8 +300,8 @@ def leave_existing_room():
     )
     
     # Delete room if empty
-    empty_room = rooms_collection.find_one({'room_id': room_id, 'members': []})
-    if empty_room:
+    room = rooms_collection.find_one({'room_id': room_id})
+    if room and len(room['members']) == 0:
         rooms_collection.delete_one({'room_id': room_id})
     
     # Clear session
@@ -217,51 +310,5 @@ def leave_existing_room():
     
     return redirect(url_for('index'))
 
-# SocketIO event handlers
-@socketio.on('join')
-def on_join(data):
-    username = session.get('username')
-    room = data['room']
-    
-    if username and room:
-        join_room(room)
-        emit('status', {'msg': f'{username} has entered the room.'}, room=room)
-
-@socketio.on('leave')
-def on_leave(data):
-    username = session.get('username')
-    room = data['room']
-    
-    if username and room:
-        leave_room(room)
-        emit('status', {'msg': f'{username} has left the room.'}, room=room)
-
-@socketio.on('message')
-def on_message(data):
-    username = session.get('username')
-    room = session.get('room')
-    
-    if not username or not room:
-        return
-    
-    message = data['message']
-    timestamp = datetime.datetime.now()
-    
-    # Save message to database
-    message_id = messages_collection.insert_one({
-        'room_id': room,
-        'username': username,
-        'message': message,
-        'created_at': timestamp
-    }).inserted_id
-    
-    # Broadcast message to room
-    emit('message', {
-        'username': username,
-        'message': message,
-        'created_at': timestamp.strftime('%Y-%m-%d %H:%M:%S'),
-        'message_id': str(message_id)
-    }, room=room)
-
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
