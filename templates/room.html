@@ -1,0 +1,313 @@
+<!-- templates/room.html -->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Room: {{ room_id }} - ShareSpace</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            height: 100vh;
+        }
+
+        .chat-container {
+            height: calc(100vh - 56px);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-header {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .chat-messages {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 15px;
+            background-color: white;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            border-radius: 15px;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+
+        .message-outgoing {
+            background-color: #dcf8c6;
+            margin-left: auto;
+            border-bottom-right-radius: 5px;
+        }
+
+        .message-incoming {
+            background-color: #f1f0f0;
+            margin-right: auto;
+            border-bottom-left-radius: 5px;
+        }
+
+        .chat-input {
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-top: 1px solid #dee2e6;
+        }
+
+        .sidebar {
+            height: calc(100vh - 56px);
+            border-left: 1px solid #dee2e6;
+            padding: 15px;
+            background-color: white;
+        }
+
+        .file-card {
+            margin-bottom: 10px;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 10px;
+        }
+
+        .file-icon {
+            font-size: 24px;
+            margin-right: 10px;
+        }
+
+        .timestamp {
+            font-size: 0.75rem;
+            color: #6c757d;
+            display: block;
+            margin-top: 5px;
+        }
+
+        .notification {
+            text-align: center;
+            margin: 10px 0;
+            color: #6c757d;
+            font-style: italic;
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">ShareSpace</a>
+            <div class="d-flex align-items-center text-white">
+                <span class="me-3">Room ID: <span class="badge bg-light text-dark">{{ room_id }}</span></span>
+                <span class="me-3">User: <span class="badge bg-primary">{{ username }}</span></span>
+                <a href="{{ url_for('leave_room_route', room_id=room_id) }}" class="btn btn-outline-light btn-sm">Leave
+                    Room</a>
+            </div>
+        </div>
+    </nav>
+
+    {% if get_flashed_messages() %}
+    <div class="alert alert-info alert-dismissible fade show m-2" role="alert">
+        {% for message in get_flashed_messages() %}
+        {{ message }}
+        {% endfor %}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    {% endif %}
+
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-md-8">
+                <div class="chat-container">
+                    <div class="chat-header">
+                        <h5>Chat <small class="text-muted">with {{ members|reject("equalto", username)|first }}</small>
+                        </h5>
+                    </div>
+                    <div class="chat-messages" id="chat-messages">
+                        {% for message in messages %}
+                        <div
+                            class="message {% if message.sender == username %}message-outgoing{% else %}message-incoming{% endif %}">
+                            <strong>{{ message.sender }}</strong>: {{ message.content }}
+                            <span class="timestamp">{{ message.timestamp }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <div class="chat-input">
+                        <form id="message-form">
+                            <div class="input-group">
+                                <input type="text" id="message-input" class="form-control"
+                                    placeholder="Type your message...">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-send"></i> Send
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="sidebar">
+                    <h5 class="mb-3">Shared Files</h5>
+
+                    <form action="{{ url_for('upload_file', room_id=room_id) }}" method="post"
+                        enctype="multipart/form-data" class="mb-4">
+                        <div class="mb-3">
+                            <label for="file" class="form-label">Upload a file (max 16MB)</label>
+                            <input type="file" class="form-control" id="file" name="file" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="bi bi-upload"></i> Upload
+                        </button>
+                    </form>
+
+                    <div id="files-container">
+                        {% if files %}
+                        {% for file in files %}
+                        <div class="file-card">
+                            <div class="d-flex align-items-center">
+                                <i class="bi bi-file-earmark file-icon"></i>
+                                <div>
+                                    <div>{{ file.original_name }}</div>
+                                    <small class="text-muted">
+                                        Uploaded by {{ file.uploaded_by }} at {{ file.uploaded_at }}
+                                    </small>
+                                </div>
+                            </div>
+                            <div class="mt-2">
+                                <a href="{{ url_for('download_file', filename=file.filename) }}"
+                                    class="btn btn-sm btn-outline-primary w-100">
+                                    <i class="bi bi-download"></i> Download
+                                </a>
+                            </div>
+                        </div>
+                        {% endfor %}
+                        {% else %}
+                        <p class="text-muted">No files shared yet.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const socket = io();
+            const roomId = "{{ room_id }}";
+            const username = "{{ username }}";
+            const chatMessages = document.getElementById('chat-messages');
+            const messageForm = document.getElementById('message-form');
+            const messageInput = document.getElementById('message-input');
+            const filesContainer = document.getElementById('files-container');
+
+            // Scroll to bottom of chat
+            function scrollToBottom() {
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+
+            // Join room on connect
+            socket.on('connect', function () {
+                socket.emit('join', { room_id: roomId });
+                scrollToBottom();
+            });
+
+            // Handle new messages
+            socket.on('new_message', function (data) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${data.sender === username ? 'message-outgoing' : 'message-incoming'}`;
+                messageDiv.innerHTML = `
+                    <strong>${data.sender}</strong>: ${data.content}
+                    <span class="timestamp">${data.timestamp}</span>
+                `;
+                chatMessages.appendChild(messageDiv);
+                scrollToBottom();
+            });
+
+            // Handle user joined notification
+            socket.on('user_joined', function (data) {
+                if (data.username !== username) {
+                    const notificationDiv = document.createElement('div');
+                    notificationDiv.className = 'notification';
+                    notificationDiv.textContent = `${data.username} has joined the room`;
+                    chatMessages.appendChild(notificationDiv);
+                    scrollToBottom();
+                }
+            });
+
+            // Handle user left notification
+            socket.on('user_left', function (data) {
+                const notificationDiv = document.createElement('div');
+                notificationDiv.className = 'notification';
+                notificationDiv.textContent = `${data.username} has left the room`;
+                chatMessages.appendChild(notificationDiv);
+                scrollToBottom();
+            });
+
+            // Handle file upload notification
+            socket.on('file_uploaded', function (data) {
+                // Add notification to chat
+                const notificationDiv = document.createElement('div');
+                notificationDiv.className = 'notification';
+                notificationDiv.textContent = `${data.uploader} uploaded a file: ${data.file.original_name}`;
+                chatMessages.appendChild(notificationDiv);
+                scrollToBottom();
+
+                // Add file card if not already present
+                if (document.querySelector(`[data-filename="${data.file.filename}"]`) === null) {
+                    // Clear "No files" message if it exists
+                    const noFilesMsg = filesContainer.querySelector('p.text-muted');
+                    if (noFilesMsg) {
+                        noFilesMsg.remove();
+                    }
+
+                    const fileCard = document.createElement('div');
+                    fileCard.className = 'file-card';
+                    fileCard.setAttribute('data-filename', data.file.filename);
+                    fileCard.innerHTML = `
+                        <div class="d-flex align-items-center">
+                            <i class="bi bi-file-earmark file-icon"></i>
+                            <div>
+                                <div>${data.file.original_name}</div>
+                                <small class="text-muted">
+                                    Uploaded by ${data.file.uploaded_by} at ${data.file.uploaded_at}
+                                </small>
+                            </div>
+                        </div>
+                        <div class="mt-2">
+                            <a href="/download/${data.file.filename}" class="btn btn-sm btn-outline-primary w-100">
+                                <i class="bi bi-download"></i> Download
+                            </a>
+                        </div>
+                    `;
+                    filesContainer.appendChild(fileCard);
+                }
+            });
+
+            // Handle message form submission
+            messageForm.addEventListener('submit', function (e) {
+                e.preventDefault();
+
+                const message = messageInput.value.trim();
+                if (message) {
+                    socket.emit('send_message', {
+                        room_id: roomId,
+                        message: message
+                    });
+
+                    messageInput.value = '';
+                    messageInput.focus();
+                }
+            });
+
+            // Handle disconnect when leaving page
+            window.addEventListener('beforeunload', function () {
+                socket.emit('leave', { room_id: roomId });
+            });
+        });
+    </script>
+</body>
+
+</html>
