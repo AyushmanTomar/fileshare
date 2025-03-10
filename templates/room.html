@@ -1,190 +1,95 @@
-<!-- templates/room.html -->
+# templates/room.html
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Room: {{ room_id }} - ShareSpace</title>
+    <title>Room {{ room }} | Room Sharing App</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
-    <style>
-        body {
-            background-color: #f8f9fa;
-            height: 100vh;
-        }
-
-        .chat-container {
-            height: calc(100vh - 56px);
-            display: flex;
-            flex-direction: column;
-        }
-
-        .chat-header {
-            background-color: #f8f9fa;
-            padding: 15px;
-            border-bottom: 1px solid #dee2e6;
-        }
-
-        .chat-messages {
-            flex-grow: 1;
-            overflow-y: auto;
-            padding: 15px;
-            background-color: white;
-        }
-
-        .message {
-            margin-bottom: 15px;
-            padding: 10px 15px;
-            border-radius: 15px;
-            max-width: 80%;
-            word-wrap: break-word;
-        }
-
-        .message-outgoing {
-            background-color: #dcf8c6;
-            margin-left: auto;
-            border-bottom-right-radius: 5px;
-        }
-
-        .message-incoming {
-            background-color: #f1f0f0;
-            margin-right: auto;
-            border-bottom-left-radius: 5px;
-        }
-
-        .chat-input {
-            padding: 15px;
-            background-color: #f8f9fa;
-            border-top: 1px solid #dee2e6;
-        }
-
-        .sidebar {
-            height: calc(100vh - 56px);
-            border-left: 1px solid #dee2e6;
-            padding: 15px;
-            background-color: white;
-        }
-
-        .file-card {
-            margin-bottom: 10px;
-            border: 1px solid #dee2e6;
-            border-radius: 5px;
-            padding: 10px;
-        }
-
-        .file-icon {
-            font-size: 24px;
-            margin-right: 10px;
-        }
-
-        .timestamp {
-            font-size: 0.75rem;
-            color: #6c757d;
-            display: block;
-            margin-top: 5px;
-        }
-
-        .notification {
-            text-align: center;
-            margin: 10px 0;
-            color: #6c757d;
-            font-style: italic;
-        }
-    </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.1.1/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
-
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-        <div class="container-fluid">
-            <a class="navbar-brand" href="#">ShareSpace</a>
-            <div class="d-flex align-items-center text-white">
-                <span class="me-3">Room ID: <span class="badge bg-light text-dark">{{ room_id }}</span></span>
-                <span class="me-3">User: <span class="badge bg-primary">{{ username }}</span></span>
-                <a href="{{ url_for('leave_room_route', room_id=room_id) }}" class="btn btn-outline-light btn-sm">Leave
-                    Room</a>
-            </div>
-        </div>
-    </nav>
-
-    {% if get_flashed_messages() %}
-    <div class="alert alert-info alert-dismissible fade show m-2" role="alert">
-        {% for message in get_flashed_messages() %}
-        {{ message }}
-        {% endfor %}
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-    </div>
-    {% endif %}
-
-    <div class="container-fluid">
-        <div class="row">
-            <div class="col-md-8">
-                <div class="chat-container">
-                    <div class="chat-header">
-                        <h5>Chat <small class="text-muted">with {{ members|reject("equalto", username)|first }}</small>
-                        </h5>
-                    </div>
-                    <div class="chat-messages" id="chat-messages">
-                        {% for message in messages %}
-                        <div
-                            class="message {% if message.sender == username %}message-outgoing{% else %}message-incoming{% endif %}">
-                            <strong>{{ message.sender }}</strong>: {{ message.content }}
-                            <span class="timestamp">{{ message.timestamp }}</span>
-                        </div>
-                        {% endfor %}
-                    </div>
-                    <div class="chat-input">
-                        <form id="message-form">
-                            <div class="input-group">
-                                <input type="text" id="message-input" class="form-control"
-                                    placeholder="Type your message...">
-                                <button type="submit" class="btn btn-primary">
-                                    <i class="bi bi-send"></i> Send
-                                </button>
-                            </div>
+    <div class="container-fluid h-100">
+        <div class="row h-100">
+            <div class="col-md-8 col-lg-9 chat-container">
+                <div class="card h-100">
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                        <h3 class="mb-0">Room: {{ room }}</h3>
+                        <form action="{{ url_for('leave_existing_room') }}" method="post" class="d-inline">
+                            <button type="submit" class="btn btn-danger btn-sm">Leave Room</button>
                         </form>
+                    </div>
+                    <div class="card-body d-flex flex-column h-100">
+                        <div class="flex-grow-1 overflow-auto mb-3" id="chat-messages">
+                            <div class="system-message text-center">
+                                <p class="badge bg-secondary">Welcome to room {{ room }}, {{ username }}!</p>
+                                <p class="badge bg-info">Share this room ID with one other person to join</p>
+                            </div>
+                            {% for message in messages %}
+                                <div class="message-container {% if message.username == username %}message-mine{% else %}message-other{% endif %}">
+                                    <div class="message-bubble">
+                                        <div class="message-info">
+                                            <span class="message-username">{{ message.username }}</span>
+                                            <span class="message-time">{{ message.created_at.strftime('%H:%M') }}</span>
+                                        </div>
+                                        <div class="message-text">{{ message.message }}</div>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                        <div class="chat-input">
+                            <form id="message-form" class="d-flex">
+                                <input type="text" id="message-input" class="form-control me-2" placeholder="Type your message..." autocomplete="off">
+                                <button type="submit" class="btn btn-primary">Send</button>
+                            </form>
+                        </div>
                     </div>
                 </div>
             </div>
-            <div class="col-md-4">
-                <div class="sidebar">
-                    <h5 class="mb-3">Shared Files</h5>
-
-                    <form action="{{ url_for('upload_file', room_id=room_id) }}" method="post"
-                        enctype="multipart/form-data" class="mb-4">
+            <div class="col-md-4 col-lg-3 files-container">
+                <div class="card h-100">
+                    <div class="card-header bg-secondary text-white">
+                        <h4 class="mb-0">Shared Files</h4>
+                    </div>
+                    <div class="card-body d-flex flex-column h-100">
                         <div class="mb-3">
-                            <label for="file" class="form-label">Upload a file (max 16MB)</label>
-                            <input type="file" class="form-control" id="file" name="file" required>
-                        </div>
-                        <button type="submit" class="btn btn-primary w-100">
-                            <i class="bi bi-upload"></i> Upload
-                        </button>
-                    </form>
-
-                    <div id="files-container">
-                        {% if files %}
-                        {% for file in files %}
-                        <div class="file-card">
-                            <div class="d-flex align-items-center">
-                                <i class="bi bi-file-earmark file-icon"></i>
-                                <div>
-                                    <div>{{ file.original_name }}</div>
-                                    <small class="text-muted">
-                                        Uploaded by {{ file.uploaded_by }} at {{ file.uploaded_at }}
-                                    </small>
+                            <form id="file-upload-form" enctype="multipart/form-data">
+                                <div class="input-group">
+                                    <input type="file" class="form-control" id="file-input" name="file">
+                                    <button class="btn btn-success" type="submit">Upload</button>
                                 </div>
-                            </div>
-                            <div class="mt-2">
-                                <a href="{{ url_for('download_file', filename=file.filename) }}"
-                                    class="btn btn-sm btn-outline-primary w-100">
-                                    <i class="bi bi-download"></i> Download
-                                </a>
+                            </form>
+                            <div id="upload-progress" class="progress mt-2 d-none">
+                                <div class="progress-bar" role="progressbar" style="width: 0%"></div>
                             </div>
                         </div>
-                        {% endfor %}
-                        {% else %}
-                        <p class="text-muted">No files shared yet.</p>
-                        {% endif %}
+                        <div class="flex-grow-1 overflow-auto" id="files-list">
+                            {% if files %}
+                                {% for file in files %}
+                                    <div class="file-item" data-file-id="{{ file._id }}">
+                                        <div class="file-info">
+                                            <a href="{{ file.cloudinary_url }}" target="_blank" class="file-name">
+                                                <i class="fas fa-file me-2"></i>{{ file.filename }}
+                                            </a>
+                                            <div class="file-meta">
+                                                <span class="file-uploader">{{ file.uploaded_by }}</span>
+                                                <span class="file-time">{{ file.uploaded_at.strftime('%H:%M') }}</span>
+                                            </div>
+                                        </div>
+                                        {% if file.uploaded_by == username %}
+                                            <button class="btn btn-sm btn-danger delete-file" data-file-id="{{ file._id }}">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        {% endif %}
+                                    </div>
+                                {% endfor %}
+                            {% else %}
+                                <div class="text-center text-muted">
+                                    <p>No files shared yet</p>
+                                </div>
+                            {% endif %}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -193,121 +98,299 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
     <script>
-        document.addEventListener('DOMContentLoaded', function () {
+        $(document).ready(function() {
+            // Connect to WebSocket
             const socket = io();
-            const roomId = "{{ room_id }}";
-            const username = "{{ username }}";
-            const chatMessages = document.getElementById('chat-messages');
-            const messageForm = document.getElementById('message-form');
-            const messageInput = document.getElementById('message-input');
-            const filesContainer = document.getElementById('files-container');
-
-            // Scroll to bottom of chat
-            function scrollToBottom() {
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-            }
-
-            // Join room on connect
-            socket.on('connect', function () {
-                socket.emit('join', { room_id: roomId });
+            
+            // Join room
+            socket.on('connect', function() {
+                socket.emit('join', {room: '{{ room }}'});
+            });
+            
+            // Handle incoming messages
+            socket.on('message', function(data) {
+                addMessage(data);
                 scrollToBottom();
             });
-
-            // Handle new messages
-            socket.on('new_message', function (data) {
-                const messageDiv = document.createElement('div');
-                messageDiv.className = `message ${data.sender === username ? 'message-outgoing' : 'message-incoming'}`;
-                messageDiv.innerHTML = `
-                    <strong>${data.sender}</strong>: ${data.content}
-                    <span class="timestamp">${data.timestamp}</span>
-                `;
-                chatMessages.appendChild(messageDiv);
+            
+            // Handle status messages
+            socket.on('status', function(data) {
+                $('#chat-messages').append(`
+                    <div class="system-message text-center">
+                        <p class="badge bg-secondary">${data.msg}</p>
+                    </div>
+                `);
                 scrollToBottom();
             });
-
-            // Handle user joined notification
-            socket.on('user_joined', function (data) {
-                if (data.username !== username) {
-                    const notificationDiv = document.createElement('div');
-                    notificationDiv.className = 'notification';
-                    notificationDiv.textContent = `${data.username} has joined the room`;
-                    chatMessages.appendChild(notificationDiv);
-                    scrollToBottom();
+            
+            // Handle new files
+            socket.on('new_file', function(data) {
+                addFile(data);
+            });
+            
+            // Handle deleted files
+            socket.on('file_deleted', function(data) {
+                $(`[data-file-id="${data.file_id}"]`).remove();
+            });
+            
+            // Send message
+            $('#message-form').submit(function(e) {
+                e.preventDefault();
+                let message = $('#message-input').val().trim();
+                
+                if (message) {
+                    socket.emit('message', {message: message});
+                    $('#message-input').val('');
                 }
             });
-
-            // Handle user left notification
-            socket.on('user_left', function (data) {
-                const notificationDiv = document.createElement('div');
-                notificationDiv.className = 'notification';
-                notificationDiv.textContent = `${data.username} has left the room`;
-                chatMessages.appendChild(notificationDiv);
-                scrollToBottom();
-            });
-
-            // Handle file upload notification
-            socket.on('file_uploaded', function (data) {
-                // Add notification to chat
-                const notificationDiv = document.createElement('div');
-                notificationDiv.className = 'notification';
-                notificationDiv.textContent = `${data.uploader} uploaded a file: ${data.file.original_name}`;
-                chatMessages.appendChild(notificationDiv);
-                scrollToBottom();
-
-                // Add file card if not already present
-                if (document.querySelector(`[data-filename="${data.file.filename}"]`) === null) {
-                    // Clear "No files" message if it exists
-                    const noFilesMsg = filesContainer.querySelector('p.text-muted');
-                    if (noFilesMsg) {
-                        noFilesMsg.remove();
+            
+            // Handle file upload
+            $('#file-upload-form').submit(function(e) {
+                e.preventDefault();
+                
+                let fileInput = $('#file-input')[0];
+                if (fileInput.files.length === 0) {
+                    alert('Please select a file to upload');
+                    return;
+                }
+                
+                let formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+                
+                // Show progress bar
+                $('#upload-progress').removeClass('d-none');
+                
+                $.ajax({
+                    url: '/upload_file',
+                    type: 'POST',
+                    data: formData,
+                    processData: false,
+                    contentType: false,
+                    xhr: function() {
+                        let xhr = new XMLHttpRequest();
+                        xhr.upload.addEventListener('progress', function(e) {
+                            if (e.lengthComputable) {
+                                let percent = Math.round((e.loaded / e.total) * 100);
+                                $('#upload-progress .progress-bar').css('width', percent + '%');
+                            }
+                        });
+                        return xhr;
+                    },
+                    success: function(response) {
+                        // Reset form
+                        $('#file-upload-form')[0].reset();
+                        
+                        // Hide progress bar after a delay
+                        setTimeout(function() {
+                            $('#upload-progress').addClass('d-none');
+                            $('#upload-progress .progress-bar').css('width', '0%');
+                        }, 500);
+                    },
+                    error: function(xhr) {
+                        alert('Error uploading file: ' + xhr.responseJSON.error);
+                        
+                        // Hide progress bar
+                        $('#upload-progress').addClass('d-none');
+                        $('#upload-progress .progress-bar').css('width', '0%');
                     }
-
-                    const fileCard = document.createElement('div');
-                    fileCard.className = 'file-card';
-                    fileCard.setAttribute('data-filename', data.file.filename);
-                    fileCard.innerHTML = `
-                        <div class="d-flex align-items-center">
-                            <i class="bi bi-file-earmark file-icon"></i>
-                            <div>
-                                <div>${data.file.original_name}</div>
-                                <small class="text-muted">
-                                    Uploaded by ${data.file.uploaded_by} at ${data.file.uploaded_at}
-                                </small>
+                });
+            });
+            
+            // Handle file deletion
+            $(document).on('click', '.delete-file', function() {
+                let fileId = $(this).data('file-id');
+                
+                if (confirm('Are you sure you want to delete this file?')) {
+                    $.ajax({
+                        url: `/delete_file/${fileId}`,
+                        type: 'DELETE',
+                        success: function() {
+                            $(`[data-file-id="${fileId}"]`).remove();
+                        },
+                        error: function(xhr) {
+                            alert('Error deleting file: ' + xhr.responseJSON.error);
+                        }
+                    });
+                }
+            });
+            
+            // Helper function to add message to chat
+            function addMessage(data) {
+                let isMyMessage = data.username === '{{ username }}';
+                let messageHtml = `
+                    <div class="message-container ${isMyMessage ? 'message-mine' : 'message-other'}">
+                        <div class="message-bubble">
+                            <div class="message-info">
+                                <span class="message-username">${data.username}</span>
+                                <span class="message-time">${formatTime(data.created_at)}</span>
+                            </div>
+                            <div class="message-text">${data.message}</div>
+                        </div>
+                    </div>
+                `;
+                $('#chat-messages').append(messageHtml);
+            }
+            
+            // Helper function to add file to list
+            function addFile(data) {
+                let canDelete = data.username === '{{ username }}';
+                let fileHtml = `
+                    <div class="file-item" data-file-id="${data.file_id}">
+                        <div class="file-info">
+                            <a href="${data.url}" target="_blank" class="file-name">
+                                <i class="fas fa-file me-2"></i>${data.filename}
+                            </a>
+                            <div class="file-meta">
+                                <span class="file-uploader">${data.username}</span>
+                                <span class="file-time">${formatTime(data.uploaded_at)}</span>
                             </div>
                         </div>
-                        <div class="mt-2">
-                            <a href="/download/${data.file.filename}" class="btn btn-sm btn-outline-primary w-100">
-                                <i class="bi bi-download"></i> Download
-                            </a>
-                        </div>
-                    `;
-                    filesContainer.appendChild(fileCard);
-                }
-            });
-
-            // Handle message form submission
-            messageForm.addEventListener('submit', function (e) {
-                e.preventDefault();
-
-                const message = messageInput.value.trim();
-                if (message) {
-                    socket.emit('send_message', {
-                        room_id: roomId,
-                        message: message
-                    });
-
-                    messageInput.value = '';
-                    messageInput.focus();
-                }
-            });
-
-            // Handle disconnect when leaving page
-            window.addEventListener('beforeunload', function () {
-                socket.emit('leave', { room_id: roomId });
-            });
+                        ${canDelete ? `
+                            <button class="btn btn-sm btn-danger delete-file" data-file-id="${data.file_id}">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        ` : ''}
+                    </div>
+                `;
+                $('#files-list').prepend(fileHtml);
+            }
+            
+            // Helper function to format time
+            function formatTime(timestamp) {
+                if (!timestamp) return '';
+                let date = new Date(timestamp);
+                return date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            }
+            
+            // Helper function to scroll chat to bottom
+            function scrollToBottom() {
+                let chatMessages = document.getElementById('chat-messages');
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+            
+            // Scroll to bottom on load
+            scrollToBottom();
         });
     </script>
 </body>
-
 </html>
+
+# static/css/style.css
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+.container-fluid {
+    height: 100%;
+    padding: 15px;
+}
+
+.chat-container, .files-container {
+    height: 100%;
+    min-height: 500px;
+}
+
+.card {
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+#chat-messages {
+    display: flex;
+    flex-direction: column;
+    padding: 15px;
+}
+
+.system-message {
+    margin: 10px 0;
+}
+
+.message-container {
+    display: flex;
+    margin-bottom: 15px;
+}
+
+.message-mine {
+    justify-content: flex-end;
+}
+
+.message-bubble {
+    max-width: 70%;
+    padding: 10px 15px;
+    border-radius: 15px;
+    background-color: #f1f1f1;
+    position: relative;
+}
+
+.message-mine .message-bubble {
+    background-color: #d1e7ff;
+}
+
+.message-info {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    font-size: 0.85rem;
+}
+
+.message-username {
+    font-weight: bold;
+}
+
+.message-time {
+    color: #777;
+}
+
+.chat-input {
+    margin-top: auto;
+}
+
+#files-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.file-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px;
+    background-color: #f8f9fa;
+    border-radius: 5px;
+    border: 1px solid #dee2e6;
+}
+
+.file-name {
+    display: block;
+    margin-bottom: 5px;
+    text-decoration: none;
+    color: #212529;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 200px;
+}
+
+.file-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: #6c757d;
+}
+
+@media (max-width: 767px) {
+    .chat-container, .files-container {
+        height: auto;
+        margin-bottom: 15px;
+    }
+    
+    .container-fluid {
+        height: auto;
+    }
+}

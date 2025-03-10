@@ -1,45 +1,38 @@
 # app.py
-import os
-import secrets
-import json
-from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, flash, session, send_from_directory
-from werkzeug.utils import secure_filename
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
 from flask_socketio import SocketIO, join_room, leave_room, emit
+from pymongo import MongoClient
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
+import os
+import uuid
+import datetime
+import secrets
+from dotenv import load_dotenv
+from bson.objectid import ObjectId
 
+# Load environment variables
+load_dotenv()
+
+# Initialize Flask app
 app = Flask(__name__)
-app.config['SECRET_KEY'] = secrets.token_hex(16)
-app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['DATA_FOLDER'] = 'data'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload size
+app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(16))
 socketio = SocketIO(app)
 
-# Ensure directories exist
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-os.makedirs(app.config['DATA_FOLDER'], exist_ok=True)
+# MongoDB Atlas connection
+client = MongoClient(os.getenv('MONGODB_URI'))
+db = client['DocKaro']
+rooms_collection = db['rooms']
+messages_collection = db['messages']
+files_collection = db['files']
 
-# Helper functions for persistent storage
-def save_room_data(room_id, room_data):
-    with open(os.path.join(app.config['DATA_FOLDER'], f"{room_id}.json"), 'w') as f:
-        json.dump(room_data, f)
-
-def load_room_data(room_id):
-    file_path = os.path.join(app.config['DATA_FOLDER'], f"{room_id}.json")
-    if os.path.exists(file_path):
-        with open(file_path, 'r') as f:
-            return json.load(f)
-    return None
-
-def save_room_files(room_id, files_data):
-    with open(os.path.join(app.config['DATA_FOLDER'], f"{room_id}_files.json"), 'w') as f:
-        json.dump(files_data, f)
-
-def load_room_files(room_id):
-    file_path = os.path.join(app.config['DATA_FOLDER'], f"{room_id}_files.json")
-    if os.path.exists(file_path):
-        with open(file_path, 'r') as f:
-            return json.load(f)
-    return []
+# Cloudinary configuration
+cloudinary.config(
+    cloud_name=os.getenv('CLOUDINARY_CLOUD_NAME'),
+    api_key=os.getenv('CLOUDINARY_API_KEY'),
+    api_secret=os.getenv('CLOUDINARY_API_SECRET')
+)
 
 @app.route('/')
 def index():
@@ -47,210 +40,228 @@ def index():
 
 @app.route('/create_room', methods=['POST'])
 def create_room():
-    room_id = secrets.token_urlsafe(8)
-    username = request.form.get('username', 'Anonymous')
+    username = request.form.get('username')
+    if not username:
+        flash('Username is required.')
+        return redirect(url_for('index'))
     
-    # Initialize room with creator as first member
-    room_data = {
+    room_id = str(uuid.uuid4())[:8]  # Generate a unique room ID
+    
+    # Create room in database
+    rooms_collection.insert_one({
+        'room_id': room_id,
+        'created_at': datetime.datetime.now(),
+        'created_by': username,
         'members': [username],
-        'messages': [],
-        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    }
-    
-    # Save room data to disk
-    save_room_data(room_id, room_data)
-    save_room_files(room_id, [])
+        'max_members': 2
+    })
     
     session['username'] = username
-    session['room_id'] = room_id
+    session['room'] = room_id
     
-    flash(f'Room created successfully! Share this room ID: {room_id}')
     return redirect(url_for('room', room_id=room_id))
 
 @app.route('/join_room', methods=['POST'])
 def join_existing_room():
+    username = request.form.get('username')
     room_id = request.form.get('room_id')
-    username = request.form.get('username', 'Anonymous')
     
-    # Load room data from disk
-    room_data = load_room_data(room_id)
+    if not username or not room_id:
+        flash('Both username and room ID are required.')
+        return redirect(url_for('index'))
     
-    if not room_id or not room_data:
-        flash('Invalid room ID. Please try again.')
+    # Check if room exists
+    room = rooms_collection.find_one({'room_id': room_id})
+    if not room:
+        flash('Room does not exist.')
         return redirect(url_for('index'))
     
     # Check if room is full (max 2 people)
-    if len(room_data['members']) >= 2:
-        flash('Room is full. Please try another room.')
+    if len(room['members']) >= 2 and username not in room['members']:
+        flash('Room is full.')
         return redirect(url_for('index'))
     
-    # Add user to room
-    if username not in room_data['members']:
-        room_data['members'].append(username)
-        save_room_data(room_id, room_data)
+    # Add user to room if not already a member
+    if username not in room['members']:
+        rooms_collection.update_one(
+            {'room_id': room_id},
+            {'$push': {'members': username}}
+        )
     
     session['username'] = username
-    session['room_id'] = room_id
+    session['room'] = room_id
     
     return redirect(url_for('room', room_id=room_id))
 
 @app.route('/room/<room_id>')
 def room(room_id):
-    # Load room data from disk
-    room_data = load_room_data(room_id)
-    
-    if not room_data:
-        flash('Room not found.')
+    if 'username' not in session or 'room' not in session:
         return redirect(url_for('index'))
     
-    username = session.get('username')
-    if not username or username not in room_data['members']:
-        flash('You are not a member of this room.')
+    # Check if user is in the room
+    room = rooms_collection.find_one({'room_id': room_id})
+    if not room or session['username'] not in room['members']:
         return redirect(url_for('index'))
     
-    # Load files data from disk
-    files_data = load_room_files(room_id)
+    # Get room messages
+    messages = list(messages_collection.find({'room_id': room_id}).sort('created_at', 1))
+    
+    # Get room files
+    files = list(files_collection.find({'room_id': room_id}).sort('uploaded_at', -1))
     
     return render_template(
         'room.html', 
-        room_id=room_id, 
-        username=username,
-        messages=room_data['messages'],
-        files=files_data,
-        members=room_data['members']
+        username=session['username'], 
+        room=room_id, 
+        messages=messages, 
+        files=files
     )
 
-@app.route('/upload/<room_id>', methods=['POST'])
-def upload_file(room_id):
-    # Load room data from disk
-    room_data = load_room_data(room_id)
+@app.route('/upload_file', methods=['POST'])
+def upload_file():
+    if 'username' not in session or 'room' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
     
-    if not room_data:
-        return redirect(url_for('index'))
+    room_id = session['room']
+    username = session['username']
     
-    username = session.get('username')
-    if not username or username not in room_data['members']:
-        return redirect(url_for('index'))
-    
+    # Check if file is in request
     if 'file' not in request.files:
-        flash('No file part')
-        return redirect(url_for('room', room_id=room_id))
+        return jsonify({'error': 'No file part'}), 400
     
     file = request.files['file']
+    
+    # Check if file is empty
     if file.filename == '':
-        flash('No selected file')
-        return redirect(url_for('room', room_id=room_id))
+        return jsonify({'error': 'No selected file'}), 400
     
-    if file:
-        filename = secure_filename(file.filename)
-        # Add timestamp to filename to avoid collisions
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        filename = f"{timestamp}_{filename}"
-        
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(file_path)
-        
-        file_info = {
-            'filename': filename,
-            'original_name': secure_filename(file.filename),
-            'uploaded_by': username,
-            'uploaded_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            'size': os.path.getsize(file_path)
-        }
-        
-        # Load files data, add new file, and save
-        files_data = load_room_files(room_id)
-        files_data.append(file_info)
-        save_room_files(room_id, files_data)
-        
-        # Notify room members about new file
-        socketio.emit('file_uploaded', {
-            'file': file_info,
-            'uploader': username
-        }, to=room_id)
-        
-        flash('File uploaded successfully!')
+    # Upload file to Cloudinary
+    upload_result = cloudinary.uploader.upload(file)
     
-    return redirect(url_for('room', room_id=room_id))
+    # Save file info to database
+    file_id = str(ObjectId())
+    file_info = {
+        '_id': file_id,
+        'room_id': room_id,
+        'filename': file.filename,
+        'cloudinary_url': upload_result['secure_url'],
+        'cloudinary_public_id': upload_result['public_id'],
+        'uploaded_by': username,
+        'uploaded_at': datetime.datetime.now()
+    }
+    
+    files_collection.insert_one(file_info)
+    
+    # Notify room members about new file
+    socketio.emit('new_file', {
+        'username': username,
+        'filename': file.filename,
+        'url': upload_result['secure_url'],
+        'file_id': file_id,
+        'uploaded_at': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }, room=room_id)
+    
+    return jsonify({
+        'success': True, 
+        'file_url': upload_result['secure_url'],
+        'file_id': file_id
+    })
 
-@app.route('/download/<filename>')
-def download_file(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+@app.route('/delete_file/<file_id>', methods=['DELETE'])
+def delete_file(file_id):
+    if 'username' not in session or 'room' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    # Get file info
+    file_info = files_collection.find_one({'_id': file_id})
+    if not file_info:
+        return jsonify({'error': 'File not found'}), 404
+    
+    # Check if user is allowed to delete the file
+    if file_info['uploaded_by'] != session['username']:
+        return jsonify({'error': 'Not allowed to delete this file'}), 403
+    
+    # Delete from Cloudinary
+    cloudinary.uploader.destroy(file_info['cloudinary_public_id'])
+    
+    # Delete from database
+    files_collection.delete_one({'_id': file_id})
+    
+    # Notify room members about deleted file
+    socketio.emit('file_deleted', {'file_id': file_id}, room=session['room'])
+    
+    return jsonify({'success': True})
 
-@app.route('/leave_room/<room_id>')
-def leave_room_route(room_id):
-    username = session.get('username')
+@app.route('/leave_room', methods=['POST'])
+def leave_existing_room():
+    if 'username' not in session or 'room' not in session:
+        return redirect(url_for('index'))
     
-    # Load room data from disk
-    room_data = load_room_data(room_id)
+    room_id = session['room']
+    username = session['username']
     
-    if room_data and username in room_data['members']:
-        room_data['members'].remove(username)
-        save_room_data(room_id, room_data)
-        
-        # Notify others that user left
-        socketio.emit('user_left', {
-            'username': username
-        }, to=room_id)
+    # Remove user from room
+    rooms_collection.update_one(
+        {'room_id': room_id},
+        {'$pull': {'members': username}}
+    )
     
+    # Delete room if empty
+    empty_room = rooms_collection.find_one({'room_id': room_id, 'members': []})
+    if empty_room:
+        rooms_collection.delete_one({'room_id': room_id})
+    
+    # Clear session
     session.pop('username', None)
-    session.pop('room_id', None)
+    session.pop('room', None)
     
-    flash('You have left the room.')
     return redirect(url_for('index'))
 
+# SocketIO event handlers
 @socketio.on('join')
 def on_join(data):
     username = session.get('username')
-    room_id = data.get('room_id')
+    room = data['room']
     
-    # Load room data from disk
-    room_data = load_room_data(room_id)
-    
-    if not room_id or not room_data or not username:
-        return
-    
-    join_room(room_id)
-    emit('user_joined', {'username': username}, to=room_id)
+    if username and room:
+        join_room(room)
+        emit('status', {'msg': f'{username} has entered the room.'}, room=room)
 
 @socketio.on('leave')
 def on_leave(data):
     username = session.get('username')
-    room_id = data.get('room_id')
+    room = data['room']
     
-    # Load room data from disk
-    room_data = load_room_data(room_id)
-    
-    if not room_id or not room_data or not username:
-        return
-    
-    leave_room(room_id)
+    if username and room:
+        leave_room(room)
+        emit('status', {'msg': f'{username} has left the room.'}, room=room)
 
-@socketio.on('send_message')
-def on_send_message(data):
+@socketio.on('message')
+def on_message(data):
     username = session.get('username')
-    room_id = data.get('room_id')
-    message = data.get('message')
+    room = session.get('room')
     
-    # Load room data from disk
-    room_data = load_room_data(room_id)
-    
-    if not room_id or not room_data or not username or not message:
+    if not username or not room:
         return
     
-    # Save message to room history
-    msg_data = {
-        'sender': username,
-        'content': message,
-        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    }
-    room_data['messages'].append(msg_data)
-    save_room_data(room_id, room_data)
+    message = data['message']
+    timestamp = datetime.datetime.now()
+    
+    # Save message to database
+    message_id = messages_collection.insert_one({
+        'room_id': room,
+        'username': username,
+        'message': message,
+        'created_at': timestamp
+    }).inserted_id
     
     # Broadcast message to room
-    emit('new_message', msg_data, to=room_id)
+    emit('message', {
+        'username': username,
+        'message': message,
+        'created_at': timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+        'message_id': str(message_id)
+    }, room=room)
 
 if __name__ == '__main__':
-    # For production with Render, use the PORT environment variable
-    port = int(os.environ.get('PORT', 5000))
-    socketio.run(app, host='0.0.0.0', port=port)
+    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
